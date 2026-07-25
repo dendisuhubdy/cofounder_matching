@@ -1,4 +1,4 @@
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::auth::extractor::CurrentUser;
 use crate::error::ApiResult;
-use crate::messaging::repo::ConversationSummary;
+use crate::messaging::repo::{ConversationSummary, Message};
 use crate::messaging::service;
 
 #[derive(serde::Deserialize)]
@@ -29,7 +29,12 @@ pub struct ConversationsView {
 }
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/conversations", get(list).post(open))
+    Router::new()
+        .route("/conversations", get(list).post(open))
+        .route(
+            "/conversations/{id}/messages",
+            get(read_messages).post(send_message),
+        )
 }
 
 async fn list(
@@ -62,4 +67,35 @@ async fn open(
             created,
         }),
     ))
+}
+
+#[derive(serde::Deserialize)]
+pub struct SendMessageRequest {
+    pub body: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct MessagesView {
+    pub messages: Vec<Message>,
+}
+
+async fn read_messages(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<MessagesView>> {
+    Ok(Json(MessagesView {
+        messages: service::read_thread(&state, id, user.id).await?,
+    }))
+}
+
+async fn send_message(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<SendMessageRequest>,
+) -> ApiResult<(StatusCode, Json<Message>)> {
+    let message = service::send_message(&state, id, user.id, &payload.body).await?;
+
+    Ok((StatusCode::CREATED, Json(message)))
 }
