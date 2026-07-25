@@ -26,7 +26,8 @@ pub fn router(state: AppState) -> Router {
         .merge(crate::assessment::routes::router())
         .merge(crate::profiles::routes::router())
         .merge(crate::deck::routes::router())
-        .merge(crate::swipes::routes::router());
+        .merge(crate::swipes::routes::router())
+        .merge(crate::messaging::routes::router());
 
     if state.test_mailer.is_some() {
         app = app.merge(test_router());

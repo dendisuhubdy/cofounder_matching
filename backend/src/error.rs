@@ -16,6 +16,11 @@ pub enum ApiError {
     #[error("not permitted")]
     Forbidden,
 
+    /// Distinct from `Forbidden` so the frontend can send the user to finish
+    /// their profile rather than telling them they are not allowed.
+    #[error("your profile is not complete yet")]
+    ProfileIncomplete,
+
     #[error("not found")]
     NotFound,
 
@@ -54,6 +59,7 @@ impl ApiError {
         match self {
             ApiError::Unauthorized => StatusCode::UNAUTHORIZED,
             ApiError::Forbidden => StatusCode::FORBIDDEN,
+            ApiError::ProfileIncomplete => StatusCode::FORBIDDEN,
             ApiError::NotFound => StatusCode::NOT_FOUND,
             ApiError::Conflict => StatusCode::CONFLICT,
             ApiError::InvalidToken => StatusCode::BAD_REQUEST,
@@ -69,6 +75,7 @@ impl ApiError {
         match self {
             ApiError::Unauthorized => "unauthorized",
             ApiError::Forbidden => "forbidden",
+            ApiError::ProfileIncomplete => "profile_incomplete",
             ApiError::NotFound => "not_found",
             ApiError::Conflict => "conflict",
             ApiError::InvalidToken => "invalid_token",
