@@ -12,6 +12,11 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env()?;
     let pool = db::connect(&config.database_url).await?;
 
+    // Applied on boot so a fresh database — a test run's, or a new
+    // deployment's — is usable without a separate migration step.
+    sqlx::migrate!("./migrations").run(&pool).await?;
+    tracing::info!("migrations up to date");
+
     let test_mailer = if config.app_env == "test" {
         Some(Arc::new(LastLinkMailer::default()))
     } else {

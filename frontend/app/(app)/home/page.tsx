@@ -37,9 +37,11 @@ export default async function HomePage() {
       <div className="flex flex-col gap-2">
         <h1 className="text-2xl font-semibold">Your profile is complete</h1>
         <p className="text-neutral-600">
-          The swipe deck arrives in the next slice. Until then you can keep your
-          profile and answers up to date.
+          You&apos;re in the deck, and other founders can see you.
         </p>
+        <Link href="/deck" className="underline">
+          Open your deck
+        </Link>
       </div>
     );
   }

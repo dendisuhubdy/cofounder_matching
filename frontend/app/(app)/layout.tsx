@@ -30,6 +30,15 @@ export default async function AppLayout({
           >
             Assessment
           </Link>
+          <Link href="/deck" className="text-sm text-neutral-700 hover:underline">
+            Deck
+          </Link>
+          <Link
+            href="/matches"
+            className="text-sm text-neutral-700 hover:underline"
+          >
+            Matches
+          </Link>
         </nav>
         <span className="text-sm text-neutral-600">{user.email}</span>
       </header>
