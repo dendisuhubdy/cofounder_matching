@@ -16,6 +16,7 @@ pub struct AppState {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
+        .merge(crate::auth::routes::router())
         .with_state(state)
 }
 
