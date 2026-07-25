@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use super::Mailer;
@@ -36,16 +37,27 @@ impl Mailer for RecordingMailer {
     }
 }
 
-/// Development-and-test mailer that also retains the most recent link so the
-/// e2e suite can follow it. Only constructed when APP_ENV=test.
+/// Development-and-test mailer that also retains the most recent link per
+/// recipient so the e2e suite can follow it. Only constructed when APP_ENV=test.
+///
+/// Keyed by address rather than holding a single "most recent link": the e2e
+/// suite runs spec files in parallel, so several sign-ins are routinely in
+/// flight at once. With one shared slot, one browser consumes another's
+/// token and the loser sees a 400 on a link that was never used.
 #[derive(Default)]
 pub struct LastLinkMailer {
-    last: Mutex<Option<String>>,
+    links: Mutex<HashMap<String, String>>,
+}
+
+/// Addresses are normalized before a link is issued, so the lookup has to
+/// normalize identically or it reports no link for a user who has one.
+fn normalize(email: &str) -> String {
+    email.trim().to_lowercase()
 }
 
 impl LastLinkMailer {
-    pub fn last(&self) -> Option<String> {
-        self.last.lock().unwrap().clone()
+    pub fn last_for(&self, email: &str) -> Option<String> {
+        self.links.lock().unwrap().get(&normalize(email)).cloned()
     }
 }
 
@@ -53,7 +65,10 @@ impl LastLinkMailer {
 impl Mailer for LastLinkMailer {
     async fn send_login_link(&self, to: &str, link: &str) -> anyhow::Result<()> {
         tracing::info!(recipient = %to, login_link = %link, "login link (test mailer)");
-        *self.last.lock().unwrap() = Some(link.to_string());
+        self.links
+            .lock()
+            .unwrap()
+            .insert(normalize(to), link.to_string());
         Ok(())
     }
 }

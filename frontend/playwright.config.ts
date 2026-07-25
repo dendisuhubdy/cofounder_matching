@@ -18,7 +18,10 @@ export default defineConfig({
   webServer: [
     {
       command: `cd ../backend && APP_ENV=test BASE_URL=${BASE_URL} cargo run`,
-      url: "http://localhost:8080/test/last-login-link",
+      // Still the test-only route, so a missing APP_ENV=test fails fast here
+      // rather than as a puzzling spec failure. The address is a placeholder;
+      // the route needs one and answers with a null link for an unknown user.
+      url: "http://localhost:8080/test/last-login-link?email=healthcheck@example.com",
       reuseExistingServer: false,
       timeout: 180_000,
     },

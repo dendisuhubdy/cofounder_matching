@@ -1,9 +1,10 @@
 import { expect, test } from "@playwright/test";
+import { uniqueEmail } from "./helpers";
 
 const BACKEND = process.env.BACKEND_URL ?? "http://localhost:8080";
 
 test("a new user signs in with a magic link", async ({ page, request }) => {
-  const email = `ada+${Date.now()}@example.com`;
+  const email = uniqueEmail("ada");
 
   await page.goto("/login");
   await page.getByPlaceholder("you@example.com").fill(email);
@@ -11,7 +12,9 @@ test("a new user signs in with a magic link", async ({ page, request }) => {
 
   await expect(page.getByText("Check your email")).toBeVisible();
 
-  const response = await request.get(`${BACKEND}/test/last-login-link`);
+  const response = await request.get(
+    `${BACKEND}/test/last-login-link?email=${encodeURIComponent(email)}`,
+  );
   const { link } = await response.json();
   expect(link).toContain("/verify?token=");
 
@@ -22,7 +25,7 @@ test("a new user signs in with a magic link", async ({ page, request }) => {
 });
 
 test("a used link is rejected the second time", async ({ page, request }) => {
-  const email = `grace+${Date.now()}@example.com`;
+  const email = uniqueEmail("grace");
 
   await page.goto("/login");
   await page.getByPlaceholder("you@example.com").fill(email);
@@ -30,7 +33,9 @@ test("a used link is rejected the second time", async ({ page, request }) => {
   await expect(page.getByText("Check your email")).toBeVisible();
 
   const { link } = await (
-    await request.get(`${BACKEND}/test/last-login-link`)
+    await request.get(
+      `${BACKEND}/test/last-login-link?email=${encodeURIComponent(email)}`,
+    )
   ).json();
 
   await page.goto(link);

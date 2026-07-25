@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::{routing::get, Json, Router};
 use serde_json::json;
 use sqlx::PgPool;
@@ -43,8 +43,22 @@ pub fn test_router() -> Router<AppState> {
     Router::new().route("/test/last-login-link", get(last_login_link))
 }
 
-async fn last_login_link(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let link = state.test_mailer.as_ref().and_then(|mailer| mailer.last());
+#[derive(serde::Deserialize)]
+pub struct LastLinkQuery {
+    /// Required. Asking for "the last link" without naming a recipient is
+    /// only safe when one sign-in is ever in flight, which stopped being true
+    /// as soon as the e2e suite ran spec files in parallel.
+    pub email: String,
+}
+
+async fn last_login_link(
+    State(state): State<AppState>,
+    Query(query): Query<LastLinkQuery>,
+) -> Json<serde_json::Value> {
+    let link = state
+        .test_mailer
+        .as_ref()
+        .and_then(|mailer| mailer.last_for(&query.email));
 
     Json(json!({ "link": link }))
 }
