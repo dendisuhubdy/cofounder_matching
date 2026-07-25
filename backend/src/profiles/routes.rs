@@ -16,6 +16,7 @@ struct OptionsView {
     stages: &'static [Choice],
     commitments: &'static [Choice],
     interests: &'static [Choice],
+    report_reasons: &'static [Choice],
 }
 
 pub fn router() -> Router<AppState> {
@@ -34,6 +35,7 @@ async fn options(CurrentUser(_user): CurrentUser) -> Json<OptionsView> {
         stages: &vocab::STAGES,
         commitments: &vocab::COMMITMENTS,
         interests: &vocab::INTERESTS,
+        report_reasons: &crate::moderation::vocab::REPORT_REASONS,
     })
 }
 
