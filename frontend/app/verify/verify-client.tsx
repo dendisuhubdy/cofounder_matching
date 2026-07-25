@@ -10,15 +10,14 @@ export default function VerifyClient({ token }: { token: string | null }) {
   const attempted = useRef(false);
 
   useEffect(() => {
+    // A missing token needs no request; it is derived during render below
+    // rather than set here, so the effect never calls setState synchronously.
+    if (!token) return;
+
     // The token is single-use, so React's development double-render must not
     // consume it twice.
     if (attempted.current) return;
     attempted.current = true;
-
-    if (!token) {
-      setFailed(true);
-      return;
-    }
 
     apiFetch("/auth/verify", {
       method: "POST",
@@ -33,9 +32,11 @@ export default function VerifyClient({ token }: { token: string | null }) {
       .catch(() => setFailed(true));
   }, [token, router]);
 
+  const showFailure = !token || failed;
+
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-3 p-6">
-      {failed ? (
+      {showFailure ? (
         <>
           <h1 className="text-2xl font-semibold">This link has expired</h1>
           <p className="text-neutral-600">

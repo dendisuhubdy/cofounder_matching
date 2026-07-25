@@ -35,3 +35,25 @@ impl Mailer for RecordingMailer {
         Ok(())
     }
 }
+
+/// Development-and-test mailer that also retains the most recent link so the
+/// e2e suite can follow it. Only constructed when APP_ENV=test.
+#[derive(Default)]
+pub struct LastLinkMailer {
+    last: Mutex<Option<String>>,
+}
+
+impl LastLinkMailer {
+    pub fn last(&self) -> Option<String> {
+        self.last.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl Mailer for LastLinkMailer {
+    async fn send_login_link(&self, to: &str, link: &str) -> anyhow::Result<()> {
+        tracing::info!(recipient = %to, login_link = %link, "login link (test mailer)");
+        *self.last.lock().unwrap() = Some(link.to_string());
+        Ok(())
+    }
+}

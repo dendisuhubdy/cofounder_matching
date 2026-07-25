@@ -13,6 +13,7 @@ fn state_with(pool: PgPool, mailer: Arc<RecordingMailer>) -> AppState {
         mailer,
         base_url: "http://localhost:3000".into(),
         secure_cookies: false,
+        test_mailer: None,
     }
 }
 

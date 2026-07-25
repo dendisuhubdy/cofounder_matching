@@ -36,6 +36,10 @@ export async function apiFetch<T>(
     throw new ApiError(problem);
   }
 
-  if (response.status === 204) return undefined as T;
-  return (await response.json()) as T;
+  // Not every success carries a body: /auth/magic-link answers 202 with none
+  // and /auth/logout answers 204. Parsing unconditionally throws on those and
+  // makes a successful call look like a network failure.
+  const text = await response.text();
+  if (!text) return undefined as T;
+  return JSON.parse(text) as T;
 }

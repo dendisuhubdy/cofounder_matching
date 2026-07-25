@@ -14,6 +14,7 @@ async fn health_returns_ok(pool: PgPool) {
         mailer: Arc::new(RecordingMailer::default()),
         base_url: "http://localhost:3000".into(),
         secure_cookies: false,
+        test_mailer: None,
     });
 
     let response = app
