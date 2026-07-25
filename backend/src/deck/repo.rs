@@ -2,6 +2,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::assessment::scoring::TraitScores;
+use crate::profiles::repo::COMPLETE_PREDICATE;
 use crate::scoring::profile::ScoredProfile;
 
 /// A candidate as the deck needs them: everything the scorer reads, plus the
@@ -101,19 +102,10 @@ const SELECT: &str = r#"
     LEFT JOIN profile_interests pi ON pi.user_id = u.id
 "#;
 
-/// The completeness rule, in SQL. Mirrors `profiles::service::missing_requirements`.
-const COMPLETE: &str = r#"
-    u.status = 'active'
-    AND btrim(p.bio) <> ''
-    AND cardinality(p.roles) > 0
-    AND cardinality(p.seeking_roles) > 0
-    AND p.commitment IS NOT NULL
-"#;
-
 const GROUP_BY: &str = " GROUP BY u.id, p.user_id, t.user_id ";
 
 pub async fn load_profile(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Option<Candidate>> {
-    let sql = format!("{SELECT} WHERE u.id = $1 AND {COMPLETE} {GROUP_BY}");
+    let sql = format!("{SELECT} WHERE u.id = $1 AND {COMPLETE_PREDICATE} {GROUP_BY}");
 
     let row = sqlx::query_as::<_, CandidateRow>(&sql)
         .bind(user_id)
@@ -131,7 +123,7 @@ pub async fn candidates_for(pool: &PgPool, viewer_id: Uuid) -> sqlx::Result<Vec<
         r#"
         {SELECT}
         WHERE u.id <> $1
-          AND {COMPLETE}
+          AND {COMPLETE_PREDICATE}
           AND NOT EXISTS (
               SELECT 1 FROM swipes s
               WHERE s.swiper_id = $1 AND s.target_id = u.id

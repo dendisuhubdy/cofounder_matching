@@ -132,3 +132,68 @@ async fn the_database_refuses_an_unknown_role(pool: PgPool) {
 
     assert!(repo::save(&pool, user_id, &input).await.is_err());
 }
+
+#[sqlx::test]
+async fn completeness_needs_the_profile_and_the_assessment(pool: PgPool) {
+    let user_id = a_user(&pool, "ada@example.com").await;
+    assert!(!repo::is_complete(&pool, user_id).await.unwrap());
+
+    repo::save(&pool, user_id, &an_input()).await.unwrap();
+    // The profile is filled in, but the assessment is not.
+    assert!(!repo::is_complete(&pool, user_id).await.unwrap());
+
+    sqlx::query(
+        "INSERT INTO trait_scores (user_id, risk_tolerance, pace_vs_rigor, conflict_style,
+                                   decision_basis, work_mode, orientation)
+         VALUES ($1, 50, 50, 50, 50, 50, 50)",
+    )
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert!(repo::is_complete(&pool, user_id).await.unwrap());
+}
+
+#[sqlx::test]
+async fn a_suspended_account_is_never_complete(pool: PgPool) {
+    let user_id = a_user(&pool, "ada@example.com").await;
+    repo::save(&pool, user_id, &an_input()).await.unwrap();
+    sqlx::query(
+        "INSERT INTO trait_scores (user_id, risk_tolerance, pace_vs_rigor, conflict_style,
+                                   decision_basis, work_mode, orientation)
+         VALUES ($1, 50, 50, 50, 50, 50, 50)",
+    )
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(repo::is_complete(&pool, user_id).await.unwrap());
+
+    sqlx::query("UPDATE users SET status = 'suspended' WHERE id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert!(!repo::is_complete(&pool, user_id).await.unwrap());
+}
+
+#[sqlx::test]
+async fn an_empty_bio_is_not_complete(pool: PgPool) {
+    let user_id = a_user(&pool, "ada@example.com").await;
+    let mut input = an_input();
+    input.bio = "   ".into();
+    repo::save(&pool, user_id, &input).await.unwrap();
+    sqlx::query(
+        "INSERT INTO trait_scores (user_id, risk_tolerance, pace_vs_rigor, conflict_style,
+                                   decision_basis, work_mode, orientation)
+         VALUES ($1, 50, 50, 50, 50, 50, 50)",
+    )
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert!(!repo::is_complete(&pool, user_id).await.unwrap());
+}

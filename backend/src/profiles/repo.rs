@@ -66,6 +66,39 @@ const COLUMNS: &str = "display_name, headline, bio, city, country, timezone, \
      utc_offset_minutes, linkedin_url, github_url, website_url, roles, seeking_roles, \
      idea_status, stage, commitment";
 
+/// The half of "complete" that SQL can express, over the aliases `u`
+/// (users) and `p` (profiles). The assessment half is the presence of a
+/// `trait_scores` row, which callers join or check separately because they
+/// differ in whether they need the scores themselves.
+///
+/// Kept here rather than in each caller: the deck's candidate query, the
+/// messaging preconditions and this function all need the same rule, and
+/// three copies of it would drift.
+pub const COMPLETE_PREDICATE: &str = r#"
+    u.status = 'active'
+    AND btrim(p.bio) <> ''
+    AND cardinality(p.roles) > 0
+    AND cardinality(p.seeking_roles) > 0
+    AND p.commitment IS NOT NULL
+"#;
+
+/// Whether this user may appear in a deck and may send messages.
+pub async fn is_complete(pool: &PgPool, user_id: Uuid) -> sqlx::Result<bool> {
+    let sql = format!(
+        r#"
+        SELECT EXISTS (
+            SELECT 1
+            FROM users u
+            JOIN profiles p     ON p.user_id = u.id
+            JOIN trait_scores t ON t.user_id = u.id
+            WHERE u.id = $1 AND {COMPLETE_PREDICATE}
+        )
+        "#
+    );
+
+    sqlx::query_scalar(&sql).bind(user_id).fetch_one(pool).await
+}
+
 pub async fn find_by_user_id(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Option<ProfileRow>> {
     sqlx::query_as::<_, ProfileRow>(&format!(
         "SELECT {COLUMNS} FROM profiles WHERE user_id = $1"
