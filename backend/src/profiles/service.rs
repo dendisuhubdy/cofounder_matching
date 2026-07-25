@@ -7,6 +7,7 @@ use crate::assessment::repo as assessment_repo;
 use crate::assessment::service::TOTAL_QUESTIONS;
 use crate::error::{ApiError, ApiResult, FieldError};
 use crate::profiles::repo::{self, ProfileInput, ProfileRow};
+use crate::profiles::timezone;
 use crate::profiles::vocab::{self, Choice};
 
 const MAX_DISPLAY_NAME: usize = 80;
@@ -40,6 +41,7 @@ fn empty_row() -> ProfileRow {
         city: String::new(),
         country: String::new(),
         timezone: String::new(),
+        utc_offset_minutes: None,
         linkedin_url: None,
         github_url: None,
         website_url: None,
@@ -159,6 +161,24 @@ fn normalize_and_validate(input: &mut ProfileInput) -> ApiResult<()> {
     check_length(&mut errors, "city", &input.city, MAX_PLACE);
     check_length(&mut errors, "country", &input.country, MAX_PLACE);
     check_length(&mut errors, "timezone", &input.timezone, MAX_TIMEZONE);
+
+    // A named zone that cannot be resolved is a validation failure rather
+    // than a silent null: the user typed something, and geography scoring
+    // would quietly ignore it.
+    if input.timezone.is_empty() {
+        input.utc_offset_minutes = None;
+    } else {
+        match timezone::utc_offset_minutes(&input.timezone) {
+            Some(offset) => input.utc_offset_minutes = Some(offset),
+            None => {
+                input.utc_offset_minutes = None;
+                errors.push(FieldError {
+                    field: "timezone".into(),
+                    message: "is not a known timezone, for example Europe/London".into(),
+                });
+            }
+        }
+    }
 
     check_tags(
         &mut errors,

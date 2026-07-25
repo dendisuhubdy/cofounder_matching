@@ -9,6 +9,7 @@ pub struct ProfileRow {
     pub city: String,
     pub country: String,
     pub timezone: String,
+    pub utc_offset_minutes: Option<i16>,
     pub linkedin_url: Option<String>,
     pub github_url: Option<String>,
     pub website_url: Option<String>,
@@ -36,6 +37,11 @@ pub struct ProfileInput {
     pub country: String,
     #[serde(default)]
     pub timezone: String,
+    /// Derived from `timezone` by the service layer, never accepted from the
+    /// client — a caller must not be able to claim an offset that disagrees
+    /// with the zone they named.
+    #[serde(skip)]
+    pub utc_offset_minutes: Option<i16>,
     #[serde(default)]
     pub linkedin_url: Option<String>,
     #[serde(default)]
@@ -57,7 +63,7 @@ pub struct ProfileInput {
 }
 
 const COLUMNS: &str = "display_name, headline, bio, city, country, timezone, \
-     linkedin_url, github_url, website_url, roles, seeking_roles, \
+     utc_offset_minutes, linkedin_url, github_url, website_url, roles, seeking_roles, \
      idea_status, stage, commitment";
 
 pub async fn find_by_user_id(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Option<ProfileRow>> {
@@ -90,26 +96,27 @@ pub async fn save(
         r#"
         INSERT INTO profiles (
             user_id, display_name, headline, bio, city, country, timezone,
-            linkedin_url, github_url, website_url, roles, seeking_roles,
-            idea_status, stage, commitment, updated_at
+            utc_offset_minutes, linkedin_url, github_url, website_url,
+            roles, seeking_roles, idea_status, stage, commitment, updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now())
         ON CONFLICT (user_id) DO UPDATE SET
-            display_name  = EXCLUDED.display_name,
-            headline      = EXCLUDED.headline,
-            bio           = EXCLUDED.bio,
-            city          = EXCLUDED.city,
-            country       = EXCLUDED.country,
-            timezone      = EXCLUDED.timezone,
-            linkedin_url  = EXCLUDED.linkedin_url,
-            github_url    = EXCLUDED.github_url,
-            website_url   = EXCLUDED.website_url,
-            roles         = EXCLUDED.roles,
-            seeking_roles = EXCLUDED.seeking_roles,
-            idea_status   = EXCLUDED.idea_status,
-            stage         = EXCLUDED.stage,
-            commitment    = EXCLUDED.commitment,
-            updated_at    = now()
+            display_name       = EXCLUDED.display_name,
+            headline           = EXCLUDED.headline,
+            bio                = EXCLUDED.bio,
+            city               = EXCLUDED.city,
+            country            = EXCLUDED.country,
+            timezone           = EXCLUDED.timezone,
+            utc_offset_minutes = EXCLUDED.utc_offset_minutes,
+            linkedin_url       = EXCLUDED.linkedin_url,
+            github_url         = EXCLUDED.github_url,
+            website_url        = EXCLUDED.website_url,
+            roles              = EXCLUDED.roles,
+            seeking_roles      = EXCLUDED.seeking_roles,
+            idea_status        = EXCLUDED.idea_status,
+            stage              = EXCLUDED.stage,
+            commitment         = EXCLUDED.commitment,
+            updated_at         = now()
         RETURNING {COLUMNS}
         "#
     ))
@@ -120,6 +127,7 @@ pub async fn save(
     .bind(&input.city)
     .bind(&input.country)
     .bind(&input.timezone)
+    .bind(input.utc_offset_minutes)
     .bind(&input.linkedin_url)
     .bind(&input.github_url)
     .bind(&input.website_url)

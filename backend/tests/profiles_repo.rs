@@ -18,6 +18,7 @@ fn an_input() -> ProfileInput {
         city: "London".into(),
         country: "United Kingdom".into(),
         timezone: "Europe/London".into(),
+        utc_offset_minutes: Some(0),
         linkedin_url: Some("https://linkedin.com/in/ada".into()),
         github_url: None,
         website_url: None,

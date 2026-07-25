@@ -448,3 +448,68 @@ async fn the_profile_endpoints_require_a_session(pool: PgPool) {
         .unwrap();
     assert_eq!(write.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[sqlx::test]
+async fn saving_a_profile_derives_the_timezone_offset(pool: PgPool) {
+    let mailer = Arc::new(RecordingMailer::default());
+    let state = state_with(pool.clone(), mailer.clone());
+    let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
+
+    let mut payload = a_complete_profile();
+    payload["timezone"] = serde_json::json!("Asia/Jakarta");
+
+    let response = router(state)
+        .oneshot(put_json("/me/profile", &cookie, payload))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let offset: Option<i16> = sqlx::query_scalar("SELECT utc_offset_minutes FROM profiles")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(offset, Some(420));
+}
+
+#[sqlx::test]
+async fn an_unknown_timezone_is_rejected(pool: PgPool) {
+    let mailer = Arc::new(RecordingMailer::default());
+    let state = state_with(pool, mailer.clone());
+    let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
+
+    let mut payload = a_complete_profile();
+    payload["timezone"] = serde_json::json!("Mars/Olympus_Mons");
+
+    let response = router(state)
+        .oneshot(put_json("/me/profile", &cookie, payload))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = json_body(response).await;
+    assert_eq!(body["errors"][0]["field"], "timezone");
+}
+
+#[sqlx::test]
+async fn a_client_cannot_supply_its_own_offset(pool: PgPool) {
+    // The offset is derived. Accepting it from the body would let a caller
+    // claim to be in a timezone their named zone contradicts.
+    let mailer = Arc::new(RecordingMailer::default());
+    let state = state_with(pool.clone(), mailer.clone());
+    let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
+
+    let mut payload = a_complete_profile();
+    payload["timezone"] = serde_json::json!("Asia/Jakarta");
+    payload["utc_offset_minutes"] = serde_json::json!(-600);
+
+    router(state)
+        .oneshot(put_json("/me/profile", &cookie, payload))
+        .await
+        .unwrap();
+
+    let offset: Option<i16> = sqlx::query_scalar("SELECT utc_offset_minutes FROM profiles")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(offset, Some(420));
+}
