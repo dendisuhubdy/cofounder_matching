@@ -29,6 +29,31 @@ impl Axis {
             Axis::Orientation => "orientation",
         }
     }
+
+    /// The wording used on cards. Taken from the design document's axis
+    /// table so an explanation cannot describe an axis differently from the
+    /// way it is scored.
+    pub fn low_label(self) -> &'static str {
+        match self {
+            Axis::RiskTolerance => "de-risk before committing",
+            Axis::PaceVsRigor => "build it right",
+            Axis::ConflictStyle => "seek harmony",
+            Axis::DecisionBasis => "trust intuition",
+            Axis::WorkMode => "deep solo work",
+            Axis::Orientation => "near-term execution",
+        }
+    }
+
+    pub fn high_label(self) -> &'static str {
+        match self {
+            Axis::RiskTolerance => "bet big early",
+            Axis::PaceVsRigor => "ship it now",
+            Axis::ConflictStyle => "address directly",
+            Axis::DecisionBasis => "require data",
+            Axis::WorkMode => "constant collaboration",
+            Axis::Orientation => "long-range vision",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
