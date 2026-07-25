@@ -277,3 +277,23 @@ async fn messaging_requires_a_session(pool: PgPool) {
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[sqlx::test]
+async fn sending_publishes_an_event_addressed_to_the_recipient(pool: PgPool) {
+    let mailer = Arc::new(RecordingMailer::default());
+    let state = state_with(pool.clone(), mailer.clone());
+    let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
+    complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
+    let conversation = a_conversation(state.clone(), &cookie, grace).await;
+
+    let mut receiver = state.events.subscribe();
+
+    router(state)
+        .oneshot(say(&cookie, &conversation, "hello there"))
+        .await
+        .unwrap();
+
+    let envelope = receiver.recv().await.expect("an envelope");
+    assert_eq!(envelope.recipient_id, grace, "addressed to the other person");
+}

@@ -34,6 +34,7 @@ async fn main() -> anyhow::Result<()> {
         base_url: config.base_url.clone(),
         secure_cookies: !config.is_development(),
         test_mailer,
+        events: cofounder_api::messaging::events::EventBus::new(),
     };
 
     let listener = tokio::net::TcpListener::bind(&config.bind_addr).await?;

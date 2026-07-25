@@ -15,6 +15,7 @@ async fn health_returns_ok(pool: PgPool) {
         base_url: "http://localhost:3000".into(),
         secure_cookies: false,
         test_mailer: None,
+        events: cofounder_api::messaging::events::EventBus::new(),
     });
 
     let response = app

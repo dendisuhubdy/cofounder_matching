@@ -149,5 +149,23 @@ pub async fn send_message(
 
     let message = repo::send(&state.db, conversation.id, sender_id, trimmed).await?;
 
+    // After the write, so a client is never told about a message that failed
+    // to commit.
+    state.events.publish(
+        recipient_id,
+        crate::messaging::events::Event::NewMessage {
+            conversation_id: conversation.id,
+            sender_id,
+            preview: trimmed.chars().take(120).collect(),
+        },
+    );
+
+    let unread = repo::count_unread(&state.db, recipient_id).await?;
+    state
+        .events
+        .publish(recipient_id, crate::messaging::events::Event::UnreadCount {
+            count: unread,
+        });
+
     Ok(message)
 }

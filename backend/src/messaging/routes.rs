@@ -1,7 +1,12 @@
+use std::convert::Infallible;
+
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::routing::get;
 use axum::{Json, Router};
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::{Stream, StreamExt};
 use uuid::Uuid;
 
 use crate::app::AppState;
@@ -35,6 +40,7 @@ pub fn router() -> Router<AppState> {
             "/conversations/{id}/messages",
             get(read_messages).post(send_message),
         )
+        .route("/events", get(events))
 }
 
 async fn list(
@@ -98,4 +104,27 @@ async fn send_message(
     let message = service::send_message(&state, id, user.id, &payload.body).await?;
 
     Ok((StatusCode::CREATED, Json(message)))
+}
+
+/// A stream of this user's events. Subscribing before filtering means every
+/// connected client sees every envelope, so the `recipient_id` check here is
+/// what keeps one person's messages out of another's stream.
+async fn events(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {
+    let user_id = user.id;
+
+    let stream = BroadcastStream::new(state.events.subscribe()).filter_map(move |result| {
+        // A lagged subscriber yields an error rather than an envelope. Drop
+        // it: the client refetches on reconnect, and killing the stream
+        // would be worse than missing one notification.
+        let envelope = result.ok()?;
+        if envelope.recipient_id != user_id {
+            return None;
+        }
+        Some(Ok(SseEvent::default().json_data(envelope.event).ok()?))
+    });
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }

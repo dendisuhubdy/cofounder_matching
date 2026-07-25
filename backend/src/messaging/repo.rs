@@ -269,6 +269,23 @@ pub async fn count_started_since(
     .await
 }
 
+/// Total unread messages across every conversation, for the badge.
+pub async fn count_unread(pool: &PgPool, user_id: Uuid) -> sqlx::Result<i64> {
+    sqlx::query_scalar(
+        r#"
+        SELECT count(*)
+        FROM messages m
+        JOIN conversations c ON c.id = m.conversation_id
+        WHERE m.sender_id <> $1
+          AND m.read_at IS NULL
+          AND $1 IN (c.user_a_id, c.user_b_id)
+        "#,
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await
+}
+
 pub async fn count_messages_since(
     pool: &PgPool,
     user_id: Uuid,

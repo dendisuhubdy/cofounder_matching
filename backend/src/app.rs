@@ -17,6 +17,9 @@ pub struct AppState {
     /// Present only when APP_ENV=test. Its presence is what mounts the
     /// test-only route below.
     pub test_mailer: Option<Arc<LastLinkMailer>>,
+    /// In-process fan-out for SSE. See `messaging::events::EventBus` for why
+    /// this constrains the backend to a single process.
+    pub events: crate::messaging::events::EventBus,
 }
 
 pub fn router(state: AppState) -> Router {
