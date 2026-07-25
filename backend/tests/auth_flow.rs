@@ -2,29 +2,13 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use cofounder_api::app::{router, AppState};
+use cofounder_api::app::router;
 use cofounder_api::email::console::RecordingMailer;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
-fn state_with(pool: PgPool, mailer: Arc<RecordingMailer>) -> AppState {
-    AppState {
-        db: pool,
-        mailer,
-        base_url: "http://localhost:3000".into(),
-        secure_cookies: false,
-        test_mailer: None,
-    }
-}
-
-fn post_json(uri: &str, body: serde_json::Value) -> Request<Body> {
-    Request::builder()
-        .method("POST")
-        .uri(uri)
-        .header("content-type", "application/json")
-        .body(Body::from(body.to_string()))
-        .unwrap()
-}
+mod common;
+use common::*;
 
 #[sqlx::test]
 async fn magic_link_request_returns_202_and_sends_a_link(pool: PgPool) {
@@ -220,27 +204,6 @@ async fn an_expired_token_is_rejected(pool: PgPool) {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-}
-
-async fn sign_in(state: AppState, mailer: &RecordingMailer, email: &str) -> String {
-    let token = request_link_and_extract_token(router(state.clone()), mailer, email).await;
-
-    let response = router(state)
-        .oneshot(post_json(
-            "/auth/verify",
-            serde_json::json!({ "token": token }),
-        ))
-        .await
-        .unwrap();
-
-    let cookie = response
-        .headers()
-        .get("set-cookie")
-        .unwrap()
-        .to_str()
-        .unwrap();
-
-    cookie.split(';').next().unwrap().to_string()
 }
 
 #[sqlx::test]

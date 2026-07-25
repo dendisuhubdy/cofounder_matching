@@ -8,80 +8,8 @@ use cofounder_api::email::console::RecordingMailer;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
-fn state_with(pool: PgPool, mailer: Arc<RecordingMailer>) -> AppState {
-    AppState {
-        db: pool,
-        mailer,
-        base_url: "http://localhost:3000".into(),
-        secure_cookies: false,
-        test_mailer: None,
-    }
-}
-
-fn post_json(uri: &str, body: serde_json::Value) -> Request<Body> {
-    Request::builder()
-        .method("POST")
-        .uri(uri)
-        .header("content-type", "application/json")
-        .body(Body::from(body.to_string()))
-        .unwrap()
-}
-
-async fn sign_in(state: AppState, mailer: &RecordingMailer, email: &str) -> String {
-    router(state.clone())
-        .oneshot(post_json(
-            "/auth/magic-link",
-            serde_json::json!({ "email": email }),
-        ))
-        .await
-        .unwrap();
-
-    let link = mailer.sent().last().unwrap().1.clone();
-    let token = link.split("token=").nth(1).unwrap().to_string();
-
-    let response = router(state)
-        .oneshot(post_json(
-            "/auth/verify",
-            serde_json::json!({ "token": token }),
-        ))
-        .await
-        .unwrap();
-
-    let cookie = response
-        .headers()
-        .get("set-cookie")
-        .unwrap()
-        .to_str()
-        .unwrap();
-
-    cookie.split(';').next().unwrap().to_string()
-}
-
-fn get(uri: &str, cookie: &str) -> Request<Body> {
-    Request::builder()
-        .uri(uri)
-        .header("cookie", cookie)
-        .body(Body::empty())
-        .unwrap()
-}
-
-fn put_json(uri: &str, cookie: &str, body: serde_json::Value) -> Request<Body> {
-    Request::builder()
-        .method("PUT")
-        .uri(uri)
-        .header("cookie", cookie)
-        .header("content-type", "application/json")
-        .body(Body::from(body.to_string()))
-        .unwrap()
-}
-
-async fn json_body(response: axum::response::Response) -> serde_json::Value {
-    let bytes = http_body_util::BodyExt::collect(response.into_body())
-        .await
-        .unwrap()
-        .to_bytes();
-    serde_json::from_slice(&bytes).unwrap()
-}
+mod common;
+use common::*;
 
 fn a_complete_profile() -> serde_json::Value {
     serde_json::json!({

@@ -7,6 +7,9 @@ use cofounder_api::email::console::RecordingMailer;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
+mod common;
+use common::*;
+
 #[sqlx::test]
 async fn health_returns_ok(pool: PgPool) {
     let app = router(AppState {
