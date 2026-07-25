@@ -164,3 +164,10 @@ pub const INTERESTS: [Choice; 18] = [
 pub fn contains(choices: &[Choice], id: &str) -> bool {
     choices.iter().any(|choice| choice.id == id)
 }
+
+pub fn label(choices: &[Choice], id: &str) -> Option<&'static str> {
+    choices
+        .iter()
+        .find(|choice| choice.id == id)
+        .map(|choice| choice.label)
+}

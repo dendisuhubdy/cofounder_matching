@@ -6,4 +6,5 @@ pub mod db;
 pub mod email;
 pub mod error;
 pub mod profiles;
+pub mod scoring;
 pub mod users;
