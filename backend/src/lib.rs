@@ -3,6 +3,7 @@ pub mod assessment;
 pub mod auth;
 pub mod config;
 pub mod db;
+pub mod deck;
 pub mod email;
 pub mod error;
 pub mod profiles;
