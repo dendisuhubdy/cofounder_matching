@@ -6,6 +6,7 @@ pub mod db;
 pub mod deck;
 pub mod email;
 pub mod error;
+pub mod messaging;
 pub mod profiles;
 pub mod scoring;
 pub mod swipes;
