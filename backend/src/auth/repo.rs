@@ -1,6 +1,8 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::users::repo::User;
+
 pub async fn issue_magic_link(
     pool: &PgPool,
     user_id: Uuid,
@@ -78,6 +80,31 @@ pub async fn create_session(
     .bind(ttl_days as i32)
     .execute(pool)
     .await?;
+
+    Ok(())
+}
+
+pub async fn find_user_by_session(pool: &PgPool, token_hash: &[u8]) -> sqlx::Result<Option<User>> {
+    sqlx::query_as::<_, User>(
+        r#"
+        SELECT u.id, u.email, u.status, u.created_at, u.last_active_at
+        FROM sessions s
+        JOIN users u ON u.id = s.user_id
+        WHERE s.token_hash = $1
+          AND s.expires_at > now()
+          AND u.status = 'active'
+        "#,
+    )
+    .bind(token_hash)
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn delete_session(pool: &PgPool, token_hash: &[u8]) -> sqlx::Result<()> {
+    sqlx::query("DELETE FROM sessions WHERE token_hash = $1")
+        .bind(token_hash)
+        .execute(pool)
+        .await?;
 
     Ok(())
 }

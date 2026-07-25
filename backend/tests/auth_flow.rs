@@ -220,3 +220,117 @@ async fn an_expired_token_is_rejected(pool: PgPool) {
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
+
+async fn sign_in(state: AppState, mailer: &RecordingMailer, email: &str) -> String {
+    let token = request_link_and_extract_token(router(state.clone()), mailer, email).await;
+
+    let response = router(state)
+        .oneshot(post_json(
+            "/auth/verify",
+            serde_json::json!({ "token": token }),
+        ))
+        .await
+        .unwrap();
+
+    let cookie = response
+        .headers()
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap();
+
+    cookie.split(';').next().unwrap().to_string()
+}
+
+#[sqlx::test]
+async fn me_returns_the_signed_in_user(pool: PgPool) {
+    let mailer = Arc::new(RecordingMailer::default());
+    let state = state_with(pool, mailer.clone());
+    let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
+
+    let response = router(state)
+        .oneshot(
+            Request::builder()
+                .uri("/me")
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = http_body_util::BodyExt::collect(response.into_body())
+        .await
+        .unwrap()
+        .to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+    assert_eq!(body["email"], "ada@example.com");
+}
+
+#[sqlx::test]
+async fn me_returns_401_without_a_cookie(pool: PgPool) {
+    let mailer = Arc::new(RecordingMailer::default());
+    let app = router(state_with(pool, mailer));
+
+    let response = app
+        .oneshot(Request::builder().uri("/me").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[sqlx::test]
+async fn me_returns_401_with_a_forged_cookie(pool: PgPool) {
+    let mailer = Arc::new(RecordingMailer::default());
+    let app = router(state_with(pool, mailer));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/me")
+                .header("cookie", "session=totally-made-up")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[sqlx::test]
+async fn logout_invalidates_the_session(pool: PgPool) {
+    let mailer = Arc::new(RecordingMailer::default());
+    let state = state_with(pool, mailer.clone());
+    let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
+
+    let logout = router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/auth/logout")
+                .header("cookie", cookie.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(logout.status(), StatusCode::NO_CONTENT);
+
+    let after = router(state)
+        .oneshot(
+            Request::builder()
+                .uri("/me")
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(after.status(), StatusCode::UNAUTHORIZED);
+}

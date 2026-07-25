@@ -1,11 +1,12 @@
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 
 use crate::app::AppState;
-use crate::auth::service;
+use crate::auth::extractor::CurrentUser;
+use crate::auth::{service, tokens};
 use crate::error::ApiResult;
 
 pub const SESSION_COOKIE: &str = "session";
@@ -24,6 +25,8 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/auth/magic-link", post(request_magic_link))
         .route("/auth/verify", post(verify))
+        .route("/auth/logout", post(logout))
+        .route("/me", get(me))
 }
 
 pub fn session_cookie(token: String, secure: bool, max_age_days: i64) -> Cookie<'static> {
@@ -61,4 +64,24 @@ async fn verify(
     ));
 
     Ok((jar, Json(user)))
+}
+
+async fn me(CurrentUser(user): CurrentUser) -> Json<crate::users::repo::User> {
+    Json(user)
+}
+
+async fn logout(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> ApiResult<(CookieJar, StatusCode)> {
+    if let Some(cookie) = jar.get(SESSION_COOKIE) {
+        crate::auth::repo::delete_session(&state.db, &tokens::hash_token(cookie.value())).await?;
+    }
+
+    // The removal cookie must carry the same Path as the one that was set,
+    // or the browser treats it as a different cookie and keeps the original.
+    let removal = Cookie::build((SESSION_COOKIE, "")).path("/").build();
+    let jar = jar.remove(removal);
+
+    Ok((jar, StatusCode::NO_CONTENT))
 }
