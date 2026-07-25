@@ -52,7 +52,14 @@ export default function ThreadClient({
         );
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch(() => {
+        // Without this, a `/me` or `/conversations` failure leaves `me` and
+        // `summary` null while `load()` may still have populated messages —
+        // rendering a thread with every message misattributed to the other
+        // person, silently, since `mine` compares against a null `me.id`.
+        setError("Could not load this conversation.");
+        setLoading(false);
+      });
   }, [conversationId, load]);
 
   // Only refetch for this conversation: an event about another thread would
@@ -109,6 +116,18 @@ export default function ThreadClient({
 
   if (loading) return <p className="text-neutral-600">Loading…</p>;
 
+  // A failed initial load leaves `me` null forever (it's only ever set by
+  // that load), which would otherwise make every message misattributed to
+  // the other person (`mine` compares against a null id). Show the error
+  // instead of a thread that looks like the other person said everything.
+  if (error && !me) {
+    return (
+      <p role="alert" className="text-sm text-red-600">
+        {error}
+      </p>
+    );
+  }
+
   return (
     <div className="flex max-w-2xl flex-col gap-4">
       <Link href="/conversations" className="text-sm underline">
@@ -153,6 +172,7 @@ export default function ThreadClient({
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           placeholder="Write a message"
+          disabled={sending}
           className="flex-1 rounded-lg border border-neutral-300 px-3 py-2"
         />
         <button
