@@ -33,7 +33,7 @@ This split was chosen over putting auth in Next.js (via Auth.js) because splitti
 - **axum** — HTTP routing, extractors, SSE
 - **sqlx** — compile-time-checked queries against Postgres, migrations
 - **tokio** — async runtime
-- **argon2** — hashing magic-link tokens at rest
+- **sha2** — hashing magic-link and session tokens at rest. SHA-256, not a password KDF: these are 256-bit random tokens, so there is no low-entropy secret to slow an attacker down against, and argon2 would add latency to every request for no security gain.
 - Session cookies: `HttpOnly`, `Secure`, `SameSite=Lax`, opaque random ID backed by a `sessions` row
 
 ### Frontend stack
@@ -177,6 +177,7 @@ Open messaging on an open-signup site is the design decision most likely to need
 | `POST` | `/auth/magic-link` | Request a login link |
 | `POST` | `/auth/verify` | Consume token, issue session |
 | `POST` | `/auth/logout` | Destroy session |
+| `GET` | `/me` | Current user identity — id, email, status |
 | `GET`/`PUT` | `/me/profile` | Read and update own profile |
 | `GET` | `/questions` | Questionnaire definition |
 | `GET`/`PUT` | `/me/responses` | Read and submit questionnaire answers |
