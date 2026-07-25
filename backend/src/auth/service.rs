@@ -2,8 +2,10 @@ use crate::app::AppState;
 use crate::auth::{repo, tokens};
 use crate::error::{ApiError, ApiResult, FieldError};
 use crate::users;
+use crate::users::repo::User;
 
 pub const MAGIC_LINK_TTL_MINUTES: i64 = 15;
+pub const SESSION_TTL_DAYS: i64 = 30;
 
 /// Deliberately minimal: a full RFC 5322 parser would reject valid addresses
 /// and accept unusable ones. Deliverability is proven by the link itself.
@@ -43,4 +45,26 @@ pub async fn request_login_link(state: &AppState, email: &str) -> ApiResult<()> 
         .map_err(ApiError::Internal)?;
 
     Ok(())
+}
+
+pub async fn verify_login_token(state: &AppState, token: &str) -> ApiResult<(User, String)> {
+    let token_hash = tokens::hash_token(token);
+
+    let user_id = repo::consume_magic_link(&state.db, &token_hash)
+        .await?
+        .ok_or(ApiError::InvalidToken)?;
+
+    let user = users::repo::find_by_id(&state.db, user_id)
+        .await?
+        .ok_or(ApiError::InvalidToken)?;
+
+    if user.status != "active" {
+        return Err(ApiError::Forbidden);
+    }
+
+    let session_token = tokens::generate_token();
+    let session_hash = tokens::hash_token(&session_token);
+    repo::create_session(&state.db, user.id, &session_hash, SESSION_TTL_DAYS).await?;
+
+    Ok((user, session_token))
 }

@@ -107,3 +107,116 @@ async fn magic_link_rejects_a_malformed_email(pool: PgPool) {
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     assert!(mailer.sent().is_empty());
 }
+
+async fn request_link_and_extract_token(
+    app: axum::Router,
+    mailer: &RecordingMailer,
+    email: &str,
+) -> String {
+    app.oneshot(post_json(
+        "/auth/magic-link",
+        serde_json::json!({ "email": email }),
+    ))
+    .await
+    .unwrap();
+
+    let link = mailer.sent().last().unwrap().1.clone();
+    link.split("token=").nth(1).unwrap().to_string()
+}
+
+#[sqlx::test]
+async fn verifying_a_token_sets_a_session_cookie(pool: PgPool) {
+    let mailer = Arc::new(RecordingMailer::default());
+    let state = state_with(pool, mailer.clone());
+
+    let token =
+        request_link_and_extract_token(router(state.clone()), &mailer, "ada@example.com").await;
+
+    let response = router(state)
+        .oneshot(post_json(
+            "/auth/verify",
+            serde_json::json!({ "token": token }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let cookie = response
+        .headers()
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap();
+
+    assert!(cookie.starts_with("session="));
+    assert!(cookie.contains("HttpOnly"));
+    assert!(cookie.contains("SameSite=Lax"));
+}
+
+#[sqlx::test]
+async fn a_token_cannot_be_used_twice(pool: PgPool) {
+    let mailer = Arc::new(RecordingMailer::default());
+    let state = state_with(pool, mailer.clone());
+
+    let token =
+        request_link_and_extract_token(router(state.clone()), &mailer, "ada@example.com").await;
+
+    let first = router(state.clone())
+        .oneshot(post_json(
+            "/auth/verify",
+            serde_json::json!({ "token": token.clone() }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+
+    let second = router(state)
+        .oneshot(post_json(
+            "/auth/verify",
+            serde_json::json!({ "token": token }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(second.status(), StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test]
+async fn an_unknown_token_is_rejected(pool: PgPool) {
+    let mailer = Arc::new(RecordingMailer::default());
+    let app = router(state_with(pool, mailer));
+
+    let response = app
+        .oneshot(post_json(
+            "/auth/verify",
+            serde_json::json!({ "token": "not-a-real-token" }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test]
+async fn an_expired_token_is_rejected(pool: PgPool) {
+    let mailer = Arc::new(RecordingMailer::default());
+    let state = state_with(pool.clone(), mailer.clone());
+
+    let token =
+        request_link_and_extract_token(router(state.clone()), &mailer, "ada@example.com").await;
+
+    sqlx::query("UPDATE magic_link_tokens SET expires_at = now() - interval '1 minute'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let response = router(state)
+        .oneshot(post_json(
+            "/auth/verify",
+            serde_json::json!({ "token": token }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
