@@ -1,10 +1,12 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use cofounder_api::app::{router, AppState};
+use sqlx::PgPool;
 use tower::ServiceExt;
 
-#[tokio::test]
-async fn health_returns_ok() {
-    let app = cofounder_api::app::router();
+#[sqlx::test]
+async fn health_returns_ok(pool: PgPool) {
+    let app = router(AppState { db: pool });
 
     let response = app
         .oneshot(
