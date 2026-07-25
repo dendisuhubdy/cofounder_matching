@@ -83,6 +83,136 @@ frontend/
 
 ---
 
+### Task 0: Shared test support
+
+Six integration-test files each carry the same ~70 lines of `state_with` /
+`sign_in` / `json_body` helpers, and this slice would add four more copies.
+Rust integration tests are separate crates, so sharing needs an explicit
+module — `tests/common/mod.rs` is the idiomatic form. Extracting it before
+the slice starts means the new files are written against it rather than
+migrated afterwards.
+
+**Files:**
+- Create: `backend/tests/common/mod.rs`
+- Modify: `backend/tests/auth_flow.rs`, `assessment_api.rs`, `profile_api.rs`, `deck_api.rs`, `swipes_api.rs`, `health.rs`
+
+**Interfaces:**
+- Produces: `common::{state_with, post_json, put_json, get, json_body, sign_in, complete_profile}`
+  - `state_with(pool: PgPool, mailer: Arc<RecordingMailer>) -> AppState`
+  - `post_json(uri: &str, body: serde_json::Value) -> Request<Body>`
+  - `put_json(uri: &str, cookie: &str, body: serde_json::Value) -> Request<Body>`
+  - `get(uri: &str, cookie: &str) -> Request<Body>`
+  - `json_body(response: axum::response::Response) -> serde_json::Value`
+  - `sign_in(state: AppState, mailer: &RecordingMailer, email: &str) -> String`
+  - `complete_profile(pool: &PgPool, email: &str, name: &str, roles: &[&str], seeking: &[&str]) -> Uuid`
+
+- [ ] **Step 1: Write the shared module**
+
+Create `backend/tests/common/mod.rs`. Take the bodies of `state_with`,
+`post_json`, `put_json`, `get`, `json_body` and `sign_in` verbatim from
+`backend/tests/swipes_api.rs` — they are already identical across the six
+files — and make each `pub`. Add the file-level allow, because each test
+crate uses a different subset and Rust warns about the rest:
+
+```rust
+//! Shared helpers for the integration tests.
+//!
+//! Rust builds each file in `tests/` as its own crate, so this is included
+//! with `mod common;` rather than imported. Every crate uses a different
+//! subset of it, hence the allow.
+#![allow(dead_code)]
+```
+
+Then add the profile fixture, generalising the several near-copies that
+exist today into one function that takes the roles:
+
+```rust
+/// A user who satisfies every completeness rule: active, full profile, and
+/// a `trait_scores` row — which exists only when all eighteen answers do.
+/// Roles are parameters because scoring tests need pairs that complement
+/// each other.
+pub async fn complete_profile(
+    pool: &PgPool,
+    email: &str,
+    name: &str,
+    roles: &[&str],
+    seeking: &[&str],
+) -> Uuid {
+    let id = cofounder_api::users::repo::find_or_create_by_email(pool, email)
+        .await
+        .unwrap()
+        .id;
+
+    sqlx::query(
+        "INSERT INTO profiles (user_id, display_name, headline, bio, city, country,
+                               timezone, utc_offset_minutes, roles, seeking_roles,
+                               idea_status, stage, commitment)
+         VALUES ($1, $2, 'Building things', 'A real bio.', 'Jakarta', 'Indonesia',
+                 'Asia/Jakarta', 420, $3, $4, 'committed_idea', 'prototype', 'full_time_now')
+         ON CONFLICT (user_id) DO UPDATE SET
+             display_name  = EXCLUDED.display_name,
+             roles         = EXCLUDED.roles,
+             seeking_roles = EXCLUDED.seeking_roles",
+    )
+    .bind(id)
+    .bind(name)
+    .bind(roles.iter().map(|r| r.to_string()).collect::<Vec<String>>())
+    .bind(seeking.iter().map(|r| r.to_string()).collect::<Vec<String>>())
+    .execute(pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO trait_scores (user_id, risk_tolerance, pace_vs_rigor, conflict_style,
+                                   decision_basis, work_mode, orientation)
+         VALUES ($1, 50, 50, 50, 50, 50, 50)
+         ON CONFLICT (user_id) DO NOTHING",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    id
+}
+```
+
+Note the roles bind uses `Vec<String>`, not string interpolation: the
+existing `deck_api.rs` fixture builds its array by `format!`, which would be
+an injection point if a caller ever passed user input.
+
+- [ ] **Step 2: Migrate the existing files**
+
+In each of `auth_flow.rs`, `assessment_api.rs`, `profile_api.rs`,
+`deck_api.rs`, `swipes_api.rs` and `health.rs`: delete the local copies of
+the helpers listed above and add at the top, below the `use` lines:
+
+```rust
+mod common;
+use common::*;
+```
+
+Keep any helper that is genuinely local to one file — `deck_api.rs`'s and
+`swipes_api.rs`'s own `complete_profile` variants are replaced by the shared
+one, so update their call sites to pass roles explicitly, for example
+`complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await`.
+
+- [ ] **Step 3: Run the whole suite and verify nothing changed**
+
+Run: `cd backend && cargo test`
+Expected: PASS — 201 tests, exactly as before. This task changes no
+behaviour; a differing count means a test was lost in the migration.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add backend/tests
+git commit -m "refactor: one shared test-support module for the integration tests"
+git push origin main
+```
+
+---
+
 ### Task 1: One completeness predicate
 
 The rule "this profile may appear in a deck and may send messages" is about to be needed in a third place. It gets extracted first so the three uses cannot drift.
@@ -841,41 +971,10 @@ git push origin main
 
 - [ ] **Step 1: Write the failing test**
 
-Create `backend/tests/conversations_api.rs`. Copy `state_with`, `post_json`, `sign_in`, `get` and `json_body` verbatim from `backend/tests/swipes_api.rs`, then add:
+Create `backend/tests/conversations_api.rs`. Start it with `mod common;` and
+`use common::*;` — Task 0 put the shared helpers there — then add:
 
 ```rust
-/// A complete profile — the precondition for messaging at all.
-async fn complete_profile(pool: &PgPool, email: &str, name: &str) -> Uuid {
-    let id = cofounder_api::users::repo::find_or_create_by_email(pool, email)
-        .await
-        .unwrap()
-        .id;
-
-    sqlx::query(
-        "INSERT INTO profiles (user_id, display_name, headline, bio, roles, seeking_roles, commitment)
-         VALUES ($1, $2, 'Building things', 'A real bio.', ARRAY['engineering'], ARRAY['gtm'], 'full_time_now')
-         ON CONFLICT (user_id) DO UPDATE SET display_name = EXCLUDED.display_name",
-    )
-    .bind(id)
-    .bind(name)
-    .execute(pool)
-    .await
-    .unwrap();
-
-    sqlx::query(
-        "INSERT INTO trait_scores (user_id, risk_tolerance, pace_vs_rigor, conflict_style,
-                                   decision_basis, work_mode, orientation)
-         VALUES ($1, 50, 50, 50, 50, 50, 50)
-         ON CONFLICT (user_id) DO NOTHING",
-    )
-    .bind(id)
-    .execute(pool)
-    .await
-    .unwrap();
-
-    id
-}
-
 fn open_with(cookie: &str, target: Uuid) -> Request<Body> {
     Request::builder()
         .method("POST")
@@ -912,8 +1011,8 @@ async fn a_conversation_can_be_opened_without_a_match(pool: PgPool) {
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    complete_profile(&pool, "ada@example.com", "Ada").await;
-    let grace = complete_profile(&pool, "grace@example.com", "Grace").await;
+    complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
 
     let response = router(state)
         .oneshot(open_with(&cookie, grace))
@@ -931,8 +1030,8 @@ async fn opening_the_same_conversation_twice_returns_the_same_one(pool: PgPool) 
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    complete_profile(&pool, "ada@example.com", "Ada").await;
-    let grace = complete_profile(&pool, "grace@example.com", "Grace").await;
+    complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
 
     let first = json_body(
         router(state.clone())
@@ -956,7 +1055,7 @@ async fn an_incomplete_profile_cannot_open_a_conversation(pool: PgPool) {
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    let grace = complete_profile(&pool, "grace@example.com", "Grace").await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
 
     let response = router(state)
         .oneshot(open_with(&cookie, grace))
@@ -973,7 +1072,7 @@ async fn you_cannot_open_a_conversation_with_yourself(pool: PgPool) {
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    let ada = complete_profile(&pool, "ada@example.com", "Ada").await;
+    let ada = complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
 
     let response = router(state).oneshot(open_with(&cookie, ada)).await.unwrap();
 
@@ -985,8 +1084,8 @@ async fn a_block_prevents_opening_in_either_direction(pool: PgPool) {
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    let ada = complete_profile(&pool, "ada@example.com", "Ada").await;
-    let grace = complete_profile(&pool, "grace@example.com", "Grace").await;
+    let ada = complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
 
     sqlx::query("INSERT INTO blocks (blocker_id, blocked_id) VALUES ($1, $2)")
         .bind(grace)
@@ -1010,11 +1109,11 @@ async fn new_conversations_are_capped_per_day(pool: PgPool) {
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    complete_profile(&pool, "ada@example.com", "Ada").await;
+    complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
 
     for index in 0..MAX_NEW_CONVERSATIONS_PER_DAY {
         let target =
-            complete_profile(&pool, &format!("other{index}@example.com"), "Other").await;
+            complete_profile(&pool, &format!("other{index}@example.com"), "Other", &["gtm"], &["engineering"]).await;
         let response = router(state.clone())
             .oneshot(open_with(&cookie, target))
             .await
@@ -1023,7 +1122,7 @@ async fn new_conversations_are_capped_per_day(pool: PgPool) {
     }
 
     let one_too_many =
-        complete_profile(&pool, "onetoomany@example.com", "One Too Many").await;
+        complete_profile(&pool, "onetoomany@example.com", "One Too Many", &["gtm"], &["engineering"]).await;
     let response = router(state)
         .oneshot(open_with(&cookie, one_too_many))
         .await
@@ -1039,9 +1138,9 @@ async fn being_messaged_does_not_consume_your_own_allowance(pool: PgPool) {
     let state = state_with(pool.clone(), mailer.clone());
 
     let ada_cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    complete_profile(&pool, "ada@example.com", "Ada").await;
+    complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
     let grace_cookie = sign_in(state.clone(), &mailer, "grace@example.com").await;
-    let grace = complete_profile(&pool, "grace@example.com", "Grace").await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
 
     router(state.clone())
         .oneshot(open_with(&ada_cookie, grace))
@@ -1049,7 +1148,7 @@ async fn being_messaged_does_not_consume_your_own_allowance(pool: PgPool) {
         .unwrap();
 
     // Grace has been messaged once but has started nothing.
-    let hopper = complete_profile(&pool, "hopper@example.com", "Hopper").await;
+    let hopper = complete_profile(&pool, "hopper@example.com", "Hopper", &["product"], &["design"]).await;
     let response = router(state)
         .oneshot(open_with(&grace_cookie, hopper))
         .await
@@ -1065,9 +1164,9 @@ async fn reopening_an_existing_thread_is_not_a_new_conversation(pool: PgPool) {
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    complete_profile(&pool, "ada@example.com", "Ada").await;
+    complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
 
-    let first = complete_profile(&pool, "first@example.com", "First").await;
+    let first = complete_profile(&pool, "first@example.com", "First", &["gtm"], &["engineering"]).await;
 
     for _ in 0..(MAX_NEW_CONVERSATIONS_PER_DAY * 2) {
         let response = router(state.clone())
@@ -1083,8 +1182,8 @@ async fn the_conversation_list_shows_the_other_person(pool: PgPool) {
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    complete_profile(&pool, "ada@example.com", "Ada").await;
-    let grace = complete_profile(&pool, "grace@example.com", "Grace").await;
+    complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
 
     router(state.clone())
         .oneshot(open_with(&cookie, grace))
@@ -1382,8 +1481,8 @@ git push origin main
 
 - [ ] **Step 1: Write the failing test**
 
-Create `backend/tests/messages_api.rs`. Copy the helpers and `complete_profile`
-from `backend/tests/conversations_api.rs`, then add:
+Create `backend/tests/messages_api.rs`. Start it with `mod common;` and
+`use common::*;`, then add:
 
 ```rust
 async fn a_conversation(state: AppState, cookie: &str, target: Uuid) -> String {
@@ -1422,8 +1521,8 @@ async fn a_message_is_sent_and_read_back(pool: PgPool) {
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    complete_profile(&pool, "ada@example.com", "Ada").await;
-    let grace = complete_profile(&pool, "grace@example.com", "Grace").await;
+    complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
     let conversation = a_conversation(state.clone(), &cookie, grace).await;
 
     let response = router(state.clone())
@@ -1453,8 +1552,8 @@ async fn an_empty_message_is_rejected(pool: PgPool) {
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    complete_profile(&pool, "ada@example.com", "Ada").await;
-    let grace = complete_profile(&pool, "grace@example.com", "Grace").await;
+    complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
     let conversation = a_conversation(state.clone(), &cookie, grace).await;
 
     let response = router(state)
@@ -1474,8 +1573,8 @@ async fn an_overlong_message_is_rejected(pool: PgPool) {
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    complete_profile(&pool, "ada@example.com", "Ada").await;
-    let grace = complete_profile(&pool, "grace@example.com", "Grace").await;
+    complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
     let conversation = a_conversation(state.clone(), &cookie, grace).await;
 
     let response = router(state)
@@ -1493,12 +1592,12 @@ async fn a_stranger_cannot_read_or_write_someone_elses_conversation(pool: PgPool
     let state = state_with(pool.clone(), mailer.clone());
 
     let ada_cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    complete_profile(&pool, "ada@example.com", "Ada").await;
-    let grace = complete_profile(&pool, "grace@example.com", "Grace").await;
+    complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
     let conversation = a_conversation(state.clone(), &ada_cookie, grace).await;
 
     let stranger = sign_in(state.clone(), &mailer, "stranger@example.com").await;
-    complete_profile(&pool, "stranger@example.com", "Stranger").await;
+    complete_profile(&pool, "stranger@example.com", "Stranger", &["design"], &["product"]).await;
 
     let read = router(state.clone())
         .oneshot(get(
@@ -1521,8 +1620,8 @@ async fn a_block_stops_further_messages_in_an_existing_thread(pool: PgPool) {
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    let ada = complete_profile(&pool, "ada@example.com", "Ada").await;
-    let grace = complete_profile(&pool, "grace@example.com", "Grace").await;
+    let ada = complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
     let conversation = a_conversation(state.clone(), &cookie, grace).await;
 
     router(state.clone())
@@ -1552,8 +1651,8 @@ async fn messages_are_capped_per_minute(pool: PgPool) {
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    complete_profile(&pool, "ada@example.com", "Ada").await;
-    let grace = complete_profile(&pool, "grace@example.com", "Grace").await;
+    complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
     let conversation = a_conversation(state.clone(), &cookie, grace).await;
 
     for index in 0..MAX_MESSAGES_PER_MINUTE {
@@ -1579,8 +1678,8 @@ async fn replies_within_a_thread_are_not_limited_as_new_conversations(pool: PgPo
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    complete_profile(&pool, "ada@example.com", "Ada").await;
-    let grace = complete_profile(&pool, "grace@example.com", "Grace").await;
+    complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
     let conversation = a_conversation(state.clone(), &cookie, grace).await;
 
     for _ in 0..15 {
@@ -1598,9 +1697,9 @@ async fn opening_a_thread_marks_the_other_persons_messages_read(pool: PgPool) {
     let state = state_with(pool.clone(), mailer.clone());
 
     let ada_cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    complete_profile(&pool, "ada@example.com", "Ada").await;
+    complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
     let grace_cookie = sign_in(state.clone(), &mailer, "grace@example.com").await;
-    let grace = complete_profile(&pool, "grace@example.com", "Grace").await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
     let conversation = a_conversation(state.clone(), &ada_cookie, grace).await;
 
     router(state.clone())
@@ -1930,8 +2029,8 @@ async fn sending_publishes_an_event_addressed_to_the_recipient(pool: PgPool) {
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    complete_profile(&pool, "ada@example.com", "Ada").await;
-    let grace = complete_profile(&pool, "grace@example.com", "Grace").await;
+    complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
     let conversation = a_conversation(state.clone(), &cookie, grace).await;
 
     let mut receiver = state.events.subscribe();
@@ -2195,8 +2294,8 @@ CREATE INDEX reports_pending_idx ON reports (status, created_at DESC);
 
 - [ ] **Step 2: Write the failing test**
 
-Create `backend/tests/moderation_api.rs`. Copy the helpers and
-`complete_profile` from `backend/tests/conversations_api.rs`, then add:
+Create `backend/tests/moderation_api.rs`. Start it with `mod common;` and
+`use common::*;`, then add:
 
 ```rust
 fn post_to(uri: &str, cookie: &str, body: serde_json::Value) -> Request<Body> {
@@ -2214,8 +2313,8 @@ async fn blocking_someone_records_it(pool: PgPool) {
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    let ada = complete_profile(&pool, "ada@example.com", "Ada").await;
-    let grace = complete_profile(&pool, "grace@example.com", "Grace").await;
+    let ada = complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
 
     let response = router(state)
         .oneshot(post_to("/blocks", &cookie, serde_json::json!({ "user_id": grace })))
@@ -2241,8 +2340,8 @@ async fn blocking_twice_is_not_an_error(pool: PgPool) {
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    complete_profile(&pool, "ada@example.com", "Ada").await;
-    let grace = complete_profile(&pool, "grace@example.com", "Grace").await;
+    complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
 
     for _ in 0..2 {
         let response = router(state.clone())
@@ -2268,7 +2367,7 @@ async fn you_cannot_block_yourself(pool: PgPool) {
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    let ada = complete_profile(&pool, "ada@example.com", "Ada").await;
+    let ada = complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
 
     let response = router(state)
         .oneshot(post_to("/blocks", &cookie, serde_json::json!({ "user_id": ada })))
@@ -2284,8 +2383,8 @@ async fn a_block_removes_them_from_the_deck(pool: PgPool) {
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    complete_profile(&pool, "ada@example.com", "Ada").await;
-    let grace = complete_profile(&pool, "grace@example.com", "Grace").await;
+    complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
 
     let before = json_body(
         router(state.clone())
@@ -2314,8 +2413,8 @@ async fn a_report_is_queued_for_review(pool: PgPool) {
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    complete_profile(&pool, "ada@example.com", "Ada").await;
-    let grace = complete_profile(&pool, "grace@example.com", "Grace").await;
+    complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
 
     let response = router(state)
         .oneshot(post_to(
@@ -2346,8 +2445,8 @@ async fn a_report_does_not_suspend_anyone(pool: PgPool) {
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    complete_profile(&pool, "ada@example.com", "Ada").await;
-    let grace = complete_profile(&pool, "grace@example.com", "Grace").await;
+    complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
 
     router(state)
         .oneshot(post_to(
@@ -2371,8 +2470,8 @@ async fn an_unknown_report_reason_is_rejected(pool: PgPool) {
     let mailer = Arc::new(RecordingMailer::default());
     let state = state_with(pool.clone(), mailer.clone());
     let cookie = sign_in(state.clone(), &mailer, "ada@example.com").await;
-    complete_profile(&pool, "ada@example.com", "Ada").await;
-    let grace = complete_profile(&pool, "grace@example.com", "Grace").await;
+    complete_profile(&pool, "ada@example.com", "Ada", &["engineering"], &["gtm"]).await;
+    let grace = complete_profile(&pool, "grace@example.com", "Grace", &["gtm"], &["engineering"]).await;
 
     let response = router(state)
         .oneshot(post_to(
