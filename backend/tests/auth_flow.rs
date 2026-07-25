@@ -334,3 +334,58 @@ async fn logout_invalidates_the_session(pool: PgPool) {
 
     assert_eq!(after.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[sqlx::test]
+async fn magic_link_requests_are_capped_per_hour(pool: PgPool) {
+    let mailer = Arc::new(RecordingMailer::default());
+    let state = state_with(pool, mailer.clone());
+
+    for _ in 0..5 {
+        let response = router(state.clone())
+            .oneshot(post_json(
+                "/auth/magic-link",
+                serde_json::json!({ "email": "ada@example.com" }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+    }
+
+    let sixth = router(state)
+        .oneshot(post_json(
+            "/auth/magic-link",
+            serde_json::json!({ "email": "ada@example.com" }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(sixth.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(sixth.headers().contains_key("retry-after"));
+    assert_eq!(mailer.sent().len(), 5);
+}
+
+#[sqlx::test]
+async fn the_cap_is_per_address(pool: PgPool) {
+    let mailer = Arc::new(RecordingMailer::default());
+    let state = state_with(pool, mailer.clone());
+
+    for _ in 0..5 {
+        router(state.clone())
+            .oneshot(post_json(
+                "/auth/magic-link",
+                serde_json::json!({ "email": "ada@example.com" }),
+            ))
+            .await
+            .unwrap();
+    }
+
+    let other = router(state)
+        .oneshot(post_json(
+            "/auth/magic-link",
+            serde_json::json!({ "email": "grace@example.com" }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(other.status(), StatusCode::ACCEPTED);
+}

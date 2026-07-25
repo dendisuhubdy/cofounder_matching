@@ -6,6 +6,7 @@ use crate::users::repo::User;
 
 pub const MAGIC_LINK_TTL_MINUTES: i64 = 15;
 pub const SESSION_TTL_DAYS: i64 = 30;
+pub const MAX_LINKS_PER_HOUR: i64 = 5;
 
 /// Deliberately minimal: a full RFC 5322 parser would reject valid addresses
 /// and accept unusable ones. Deliverability is proven by the link itself.
@@ -32,6 +33,15 @@ pub async fn request_login_link(state: &AppState, email: &str) -> ApiResult<()> 
     }
 
     let user = users::repo::find_or_create_by_email(&state.db, email).await?;
+
+    // Without this, the endpoint is an open relay for mailing anyone who has
+    // an account here, or can be made to have one.
+    let recent = repo::count_recent_magic_links(&state.db, user.id, 60).await?;
+    if recent >= MAX_LINKS_PER_HOUR {
+        return Err(ApiError::RateLimited {
+            retry_after_seconds: 3600,
+        });
+    }
 
     let token = tokens::generate_token();
     let hash = tokens::hash_token(&token);
