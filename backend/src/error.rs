@@ -19,6 +19,12 @@ pub enum ApiError {
     #[error("not found")]
     NotFound,
 
+    /// The request contradicts something already recorded. Used for a repeat
+    /// swipe: swipes are permanent, so a second one is neither an update nor
+    /// a success.
+    #[error("already done")]
+    Conflict,
+
     /// Deliberately identical for expired, already-consumed, and unknown
     /// tokens so that the response cannot be used to probe for registered
     /// email addresses.
@@ -49,6 +55,7 @@ impl ApiError {
             ApiError::Unauthorized => StatusCode::UNAUTHORIZED,
             ApiError::Forbidden => StatusCode::FORBIDDEN,
             ApiError::NotFound => StatusCode::NOT_FOUND,
+            ApiError::Conflict => StatusCode::CONFLICT,
             ApiError::InvalidToken => StatusCode::BAD_REQUEST,
             ApiError::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
             ApiError::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
@@ -63,6 +70,7 @@ impl ApiError {
             ApiError::Unauthorized => "unauthorized",
             ApiError::Forbidden => "forbidden",
             ApiError::NotFound => "not_found",
+            ApiError::Conflict => "conflict",
             ApiError::InvalidToken => "invalid_token",
             ApiError::RateLimited { .. } => "rate_limited",
             ApiError::Validation(_) => "validation_failed",
