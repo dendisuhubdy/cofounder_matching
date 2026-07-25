@@ -39,6 +39,12 @@ export default async function AppLayout({
           >
             Matches
           </Link>
+          <Link
+            href="/conversations"
+            className="text-sm text-neutral-700 hover:underline"
+          >
+            Messages
+          </Link>
         </nav>
         <span className="text-sm text-neutral-600">{user.email}</span>
       </header>
