@@ -22,7 +22,8 @@ pub struct AppState {
 pub fn router(state: AppState) -> Router {
     let mut app = Router::new()
         .route("/health", get(health))
-        .merge(crate::auth::routes::router());
+        .merge(crate::auth::routes::router())
+        .merge(crate::assessment::routes::router());
 
     if state.test_mailer.is_some() {
         app = app.merge(test_router());
